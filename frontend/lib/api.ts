@@ -1,0 +1,40 @@
+import type { AnalysisResponse, AnalyzeRequest } from './types';
+
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8001';
+
+async function post<T>(path: string, body?: unknown): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      method: 'POST',
+      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    throw new Error(`Cannot reach the MigrateAI API at ${API_URL}. Is the backend running?`);
+  }
+  if (!res.ok) throw new Error(await errorMessage(res));
+  return (await res.json()) as T;
+}
+
+async function errorMessage(res: Response): Promise<string> {
+  try {
+    const data = await res.json();
+    const detail = data?.detail;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail) && detail.length > 0) {
+      return detail.map((d: { msg?: string }) => (d.msg ?? '').replace(/^Value error, /, '')).filter(Boolean).join('; ');
+    }
+  } catch {
+    // fall through
+  }
+  return `Request failed (${res.status})`;
+}
+
+export function analyzeRepository(request: AnalyzeRequest): Promise<AnalysisResponse> {
+  return post<AnalysisResponse>('/analyze', request);
+}
+
+export function analyzeSample(): Promise<AnalysisResponse> {
+  return post<AnalysisResponse>('/analyze/sample');
+}
