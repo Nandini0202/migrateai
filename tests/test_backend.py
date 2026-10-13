@@ -130,6 +130,22 @@ class CloneCommand(unittest.TestCase):
         self.assertEqual(result.repository_url, "https://github.com/owner/repo")
         self.assertEqual(result.branch, "dev")
         self.assertIs(orchestrator.get_analysis(result.id), result)
+        self.assertIsNotNone(result.plan)
+
+    def test_migration_plan_generated(self):
+        payload = _empty_payload()
+        payload["findings"] = [
+            {"file": "src/services/userService.js", "line": 8, "column": 5, "category": "Queries", "pattern": "User.findById()", "evidence": "User.findById()", "confidence": "high", "detail": "User"},
+            {"file": "src/services/postService.js", "line": 9, "column": 5, "category": "Database operations", "pattern": "Post.aggregate()", "evidence": "Post.aggregate()", "confidence": "high", "detail": "Post"},
+        ]
+        res = orchestrator._build_response(payload, source="sample", repository_url=None, branch=None)
+        self.assertIsNotNone(res.plan)
+        self.assertEqual(res.plan.source, "MongoDB/Mongoose")
+        self.assertEqual(res.plan.target, "PostgreSQL/Prisma")
+        self.assertEqual(res.plan.summary.tasks_created, 2)
+        self.assertEqual(res.plan.summary.blockers_found, 1)
+        plan = orchestrator.generate_migration_plan(res)
+        self.assertEqual(plan.summary.tasks_created, 2)
 
 
 @unittest.skipUnless(ANALYZER_BUILT, "analyzer is not built (cd analyzer && npm install && npm run build)")
@@ -184,11 +200,21 @@ class Api(unittest.TestCase):
         self.assertEqual(g.status_code, 200)
         self.assertEqual(len(g.json()["nodes"]), body["summary"]["nodeCount"])
         self.assertEqual(self.client.get(f"/analysis/{body['id']}").json()["id"], body["id"])
+        # Agent 2 migration plan
+        self.assertIn("plan", body)
+        self.assertEqual(body["plan"]["source"], "MongoDB/Mongoose")
+        self.assertEqual(body["plan"]["target"], "PostgreSQL/Prisma")
+        m = self.client.post(f"/analysis/{body['id']}/migrate")
+        self.assertEqual(m.status_code, 200)
+        self.assertEqual(m.json()["source"], "MongoDB/Mongoose")
+        p = self.client.get(f"/analysis/{body['id']}/plan")
+        self.assertEqual(p.status_code, 200)
 
     def test_validation_and_errors(self):
         self.assertEqual(self.client.post("/analyze", json={"repository_url": "https://evil.com/x/y"}).status_code, 422)
         self.assertEqual(self.client.get("/analysis/missing").status_code, 404)
-        self.assertEqual(self.client.post("/analysis/x/migrate").status_code, 501)
+        self.assertEqual(self.client.post("/analysis/missing/migrate").status_code, 404)
+        self.assertEqual(self.client.post("/analysis/x/validate").status_code, 501)
 
 
 def _empty_payload():

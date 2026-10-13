@@ -157,3 +157,58 @@ class AnalysisResponse(CamelModel):
     affected_files: List[AffectedFile]
     graph: Optional[Graph] = None
     warnings: List[str]
+    plan: Optional[MigrationPlan] = None
+
+
+# ---------------------------------------------------------------------------
+# Agent 2 — Migration Planner response models
+# ---------------------------------------------------------------------------
+
+
+class MigrationTask(CamelModel):
+    id: int
+    file: str
+    line: Optional[int] = None
+    model: Optional[str] = None
+    source_operation: Optional[str] = None
+    target_operation: Optional[str] = None
+    action: str
+    reason: str
+    priority: Literal["high", "medium", "low"]
+    status: str = "pending"
+    manual_review: bool = True
+
+
+class MigrationBlocker(CamelModel):
+    file: str
+    line: Optional[int] = None
+    pattern: str
+    keyword: str
+    severity: Literal["high", "medium", "low"]
+    reason: str
+
+
+class MigrationWarning(CamelModel):
+    file: Optional[str] = None
+    line: Optional[int] = None
+    operation: Optional[str] = None
+    finding_index: Optional[int] = None
+    message: str
+
+
+class MigrationPlanSummary(CamelModel):
+    findings_received: int
+    findings_processed: int
+    tasks_created: int
+    blockers_found: int
+    warnings_count: int
+
+
+class MigrationPlan(CamelModel):
+    source: str = "MongoDB/Mongoose"
+    target: str = "PostgreSQL/Prisma"
+    summary: MigrationPlanSummary
+    blockers: List[MigrationBlocker] = []
+    warnings: List[MigrationWarning] = []
+    tasks: List[MigrationTask] = []
+

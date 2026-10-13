@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 import orchestrator
-from schemas import AnalysisResponse, AnalyzeRequest, Graph
+from schemas import AnalysisResponse, AnalyzeRequest, Graph, MigrationPlan
 
 app = FastAPI(title="MigrateAI API", version="0.1.0")
 
@@ -62,12 +62,30 @@ def get_graph(analysis_id: str) -> Graph:
     return found.graph
 
 
-# Later milestones (Agent 2 migration, Agent 3 engineering, validation) plug in here.
-@app.post("/analysis/{analysis_id}/migrate")
-def migrate(analysis_id: str) -> None:
-    raise HTTPException(status_code=501, detail="The migration stage is not implemented yet.")
+# Agent 2 (Migration Planner)
+@app.post("/analysis/{analysis_id}/migrate", response_model=MigrationPlan)
+def migrate(analysis_id: str) -> MigrationPlan:
+    """Run Agent 2 (Migration Planner) to create a migration plan for this analysis."""
+    found = orchestrator.get_analysis(analysis_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Analysis not found (results are kept in memory only).")
+    if not found.plan:
+        found.plan = orchestrator.generate_migration_plan(found)
+    return found.plan
 
 
+@app.get("/analysis/{analysis_id}/plan", response_model=MigrationPlan)
+def get_plan(analysis_id: str) -> MigrationPlan:
+    """Retrieve the Agent 2 migration plan for this analysis."""
+    found = orchestrator.get_analysis(analysis_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Analysis not found (results are kept in memory only).")
+    if not found.plan:
+        found.plan = orchestrator.generate_migration_plan(found)
+    return found.plan
+
+
+# Later milestones (Agent 3 engineering, Agent 4 validation) plug in here.
 @app.post("/analysis/{analysis_id}/validate")
 def validate(analysis_id: str) -> None:
     raise HTTPException(status_code=501, detail="The validation stage is not implemented yet.")

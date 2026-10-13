@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import uuid
@@ -21,11 +22,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from schemas import AnalysisResponse, AnalyzeRequest, parse_github_url
+from schemas import AnalysisResponse, AnalyzeRequest, MigrationPlan, parse_github_url
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ANALYZER_DIR = Path(os.environ.get("MIGRATEAI_ANALYZER_DIR", REPO_ROOT / "analyzer"))
 SAMPLE_DIR = REPO_ROOT / "tests" / "fixtures" / "sample-app"
+MIGRATION_PLANNER_DIR = REPO_ROOT / "migration_planner"
+
+if str(MIGRATION_PLANNER_DIR) not in sys.path:
+    sys.path.insert(0, str(MIGRATION_PLANNER_DIR))
+
+try:
+    from migration.planner import create_migration_plan
+except ImportError:
+    from migration_planner.migration.planner import create_migration_plan
 
 CLONE_TIMEOUT_S = int(os.environ.get("MIGRATEAI_CLONE_TIMEOUT", "120"))
 ANALYZE_TIMEOUT_S = int(os.environ.get("MIGRATEAI_ANALYZE_TIMEOUT", "120"))
@@ -125,6 +135,8 @@ def run_analyzer(root: Path, scope: str = "relevant", generate_graph: bool = Tru
 def _build_response(
     payload: Dict[str, Any], *, source: str, repository_url: Optional[str], branch: Optional[str]
 ) -> AnalysisResponse:
+    raw_findings = payload.get("findings", [])
+    raw_plan = create_migration_plan(raw_findings)
     response = AnalysisResponse.model_validate(
         {
             **payload,  # camelCase keys straight from the analyzer
@@ -133,6 +145,7 @@ def _build_response(
             "repositoryUrl": repository_url,
             "branch": branch,
             "createdAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "plan": raw_plan,
         }
     )
     with _store_lock:
@@ -140,6 +153,13 @@ def _build_response(
         while len(_store) > MAX_STORED_ANALYSES:
             _store.popitem(last=False)
     return response
+
+
+def generate_migration_plan(analysis: AnalysisResponse) -> MigrationPlan:
+    """Agent 2: Create a migration plan from the analysis findings."""
+    raw_findings = [f.model_dump() for f in analysis.findings]
+    plan_dict = create_migration_plan(raw_findings)
+    return MigrationPlan.model_validate(plan_dict)
 
 
 def analyze_repository(request: AnalyzeRequest) -> AnalysisResponse:

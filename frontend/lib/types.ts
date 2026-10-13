@@ -74,6 +74,54 @@ export interface Summary {
   durationMs: number;
 }
 
+export interface MigrationTask {
+  id: number;
+  file: string;
+  line?: number | null;
+  model?: string | null;
+  sourceOperation?: string | null;
+  targetOperation?: string | null;
+  action: string;
+  reason: string;
+  priority: 'high' | 'medium' | 'low';
+  status: string;
+  manualReview: boolean;
+}
+
+export interface MigrationBlocker {
+  file: string;
+  line?: number | null;
+  pattern: string;
+  keyword: string;
+  severity: 'high' | 'medium' | 'low';
+  reason: string;
+}
+
+export interface MigrationWarning {
+  file?: string;
+  line?: number | null;
+  operation?: string;
+  findingIndex?: number;
+  message: string;
+}
+
+export interface MigrationPlanSummary {
+  findingsReceived: number;
+  findingsProcessed: number;
+  tasksCreated: number;
+  blockersFound: number;
+  warningsCount: number;
+}
+
+export interface MigrationPlan {
+  source: string;
+  target: string;
+  summary: MigrationPlanSummary;
+  blockers: MigrationBlocker[];
+  warnings: MigrationWarning[];
+  tasks: MigrationTask[];
+}
+
 export interface AnalysisResponse {
   id: string;
   source: 'github' | 'sample';
@@ -85,6 +133,7 @@ export interface AnalysisResponse {
   affectedFiles: AffectedFile[];
   graph: Graph | null;
   warnings: string[];
+  plan?: MigrationPlan | null;
 }
 
 export interface AnalyzeRequest {
@@ -93,3 +142,4 @@ export interface AnalyzeRequest {
   generate_graph: boolean;
   graph_scope: 'relevant' | 'all';
 }
+

@@ -9,14 +9,20 @@ interface Stage {
 interface Props {
   loading: boolean;
   hasResult: boolean;
+  migrating?: boolean;
+  hasPlan?: boolean;
 }
 
-export default function PipelineHeader({ loading, hasResult }: Props) {
+export default function PipelineHeader({ loading, hasResult, migrating, hasPlan }: Props) {
   const stages: Stage[] = [
     { name: 'Repository', caption: 'Connect GitHub', state: hasResult ? 'done' : loading ? 'active' : 'ready' },
     { name: 'Scanner', caption: 'Find MongoDB code', state: hasResult ? 'done' : loading ? 'active' : 'ready' },
     { name: 'Agent 1', caption: 'Dependency graph', state: hasResult ? 'done' : loading ? 'active' : 'ready' },
-    { name: 'Migration', caption: 'MongoDB → Prisma', state: 'future' },
+    {
+      name: 'Agent 2',
+      caption: 'Migration planner',
+      state: hasPlan ? 'done' : migrating ? 'active' : hasResult ? 'ready' : 'future',
+    },
     { name: 'Engineering', caption: 'Resolve edge cases', state: 'future' },
     { name: 'Validation', caption: 'Test the output', state: 'future' },
   ];
