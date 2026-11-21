@@ -7,9 +7,10 @@ interface Props {
   result: EngineeringResult | null;
   loading: boolean;
   onRunEngineering: (dryRun: boolean) => void;
+  onProceedToValidation?: () => void;
 }
 
-export default function EngineeringView({ result, loading, onRunEngineering }: Props) {
+export default function EngineeringView({ result, loading, onRunEngineering, onProceedToValidation }: Props) {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [activeSubTab, setActiveSubTab] = useState<'diff' | 'schema'>('diff');
 
@@ -116,6 +117,14 @@ export default function EngineeringView({ result, loading, onRunEngineering }: P
             </button>
           ) : (
             <span className="text-xs text-neon font-mono">Workspace: {result.workspaceDir}</span>
+          )}
+          {onProceedToValidation && (
+            <button
+              onClick={onProceedToValidation}
+              className="rounded-lg border border-neon/50 bg-neon-faint px-3.5 py-1.5 text-xs font-semibold text-neon hover:bg-neon/20 transition"
+            >
+              Proceed to Agent 4 (Validation) →
+            </button>
           )}
         </div>
       </div>

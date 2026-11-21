@@ -150,6 +150,57 @@ export interface EngineeringRequest {
   require_approval?: boolean;
 }
 
+export type ValidationCategory =
+  | 'schema'
+  | 'code_syntax'
+  | 'database_queries'
+  | 'dependencies'
+  | 'configuration';
+
+export type ValidationStatus = 'passed' | 'failed' | 'warning' | 'skipped';
+export type ValidationSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
+
+export interface ValidationCheck {
+  id: string;
+  name: string;
+  category: ValidationCategory;
+  status: ValidationStatus;
+  severity: ValidationSeverity;
+  message: string;
+  details?: string | null;
+  file?: string | null;
+  line?: number | null;
+  remediation?: string | null;
+}
+
+export interface ValidationSummary {
+  totalChecks: number;
+  passed: number;
+  failed: number;
+  warnings: number;
+  skipped: number;
+  readinessScore: number;
+  status: 'passed' | 'failed' | 'warnings';
+}
+
+export interface ValidationRequest {
+  dry_run?: boolean;
+  strict_mode?: boolean;
+  categories?: string[] | null;
+}
+
+export interface ValidationResult {
+  validationId: string;
+  analysisId: string;
+  migrationId?: string | null;
+  status: 'passed' | 'failed' | 'warnings';
+  summary: ValidationSummary;
+  checks: ValidationCheck[];
+  createdAt: string;
+  workspaceDir?: string | null;
+  reportMarkdown?: string | null;
+}
+
 export interface AnalysisResponse {
   id: string;
   source: 'github' | 'sample';
@@ -163,6 +214,7 @@ export interface AnalysisResponse {
   warnings: string[];
   plan?: MigrationPlan | null;
   engineering?: EngineeringResult | null;
+  validation?: ValidationResult | null;
 }
 
 export interface AnalyzeRequest {

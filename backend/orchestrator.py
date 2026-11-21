@@ -27,6 +27,8 @@ from schemas import (
     AnalyzeRequest,
     EngineeringResult,
     MigrationPlan,
+    ValidationRequest,
+    ValidationResult,
     parse_github_url,
 )
 
@@ -49,6 +51,7 @@ except ImportError:
     from migration_planner.migration.planner import create_migration_plan
 
 from agents.migration_engineering import MigrationEngineeringAgent
+from agents.validation import ValidationAgent
 
 CLONE_TIMEOUT_S = int(os.environ.get("MIGRATEAI_CLONE_TIMEOUT", "120"))
 ANALYZE_TIMEOUT_S = int(os.environ.get("MIGRATEAI_ANALYZE_TIMEOUT", "120"))
@@ -59,8 +62,10 @@ MAX_CONCURRENT_JOBS = 2
 _jobs = threading.BoundedSemaphore(MAX_CONCURRENT_JOBS)
 _store: "OrderedDict[str, AnalysisResponse]" = OrderedDict()
 _engineering_store: "OrderedDict[str, EngineeringResult]" = OrderedDict()
+_validation_store: "OrderedDict[str, ValidationResult]" = OrderedDict()
 _store_lock = threading.Lock()
 _engineering_agent = MigrationEngineeringAgent()
+_validation_agent = ValidationAgent()
 
 
 class OrchestratorError(Exception):
@@ -251,3 +256,42 @@ def run_migration_engineering(
 def get_migration(migration_id: str) -> Optional[EngineeringResult]:
     with _store_lock:
         return _engineering_store.get(migration_id)
+
+def run_validation(
+    analysis_id: str,
+    dry_run: bool = False,
+    strict_mode: bool = False,
+) -> ValidationResult:
+    """Agent 4: Run validation on the migrated repository."""
+    analysis = get_analysis(analysis_id)
+    if not analysis:
+        raise OrchestratorError(f"Analysis '{analysis_id}' not found.", 404)
+
+    # Ensure Agent 3 (Migration Engineering) has run so there are migrated files to validate
+    if not analysis.engineering or not analysis.engineering.workspace_dir or not Path(analysis.engineering.workspace_dir).is_dir():
+        # Run engineering to create the workspace on disk
+        analysis.engineering = run_migration_engineering(analysis_id, dry_run=False)
+
+    ws_dir_str = analysis.engineering.workspace_dir
+    if not ws_dir_str or not Path(ws_dir_str).is_dir():
+        raise OrchestratorError("Migrated workspace is not available for validation.", 500)
+
+    ws_dir = Path(ws_dir_str)
+    result = _validation_agent.run(
+        workspace_dir=ws_dir,
+        analysis_data=analysis.model_dump(by_alias=True),
+        migration_id=analysis.engineering.migration_id,
+        dry_run=dry_run,
+        strict_mode=strict_mode,
+    )
+
+    with _store_lock:
+        _validation_store[result.validation_id] = result
+        analysis.validation = result
+
+    return result
+
+
+def get_validation(validation_id: str) -> Optional[ValidationResult]:
+    with _store_lock:
+        return _validation_store.get(validation_id)

@@ -9,21 +9,24 @@ import NodeDetails from '@/components/NodeDetails';
 import PipelineHeader from '@/components/PipelineHeader';
 import RepositoryForm from '@/components/RepositoryForm';
 import SummaryCards from '@/components/SummaryCards';
+import ValidationView from '@/components/ValidationView';
 import {
   analyzeRepository,
   analyzeSample,
   runEngineering,
   runMigrationPlan,
+  runValidation,
 } from '@/lib/api';
-import type { AnalysisResponse, AnalyzeRequest, EngineeringResult, MigrationPlan } from '@/lib/types';
+import type { AnalysisResponse, AnalyzeRequest, EngineeringResult, MigrationPlan, ValidationResult } from '@/lib/types';
 
-type Tab = 'graph' | 'findings' | 'plan' | 'engineering';
+type Tab = 'graph' | 'findings' | 'plan' | 'engineering' | 'validation';
 
 export default function Home() {
   const [result, setResult] = useState<AnalysisResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [migrating, setMigrating] = useState(false);
   const [engineeringLoading, setEngineeringLoading] = useState(false);
+  const [validationLoading, setValidationLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('graph');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -73,6 +76,21 @@ export default function Home() {
     }
   }
 
+  async function handleRunValidation(strictMode: boolean = false) {
+    if (!result) return;
+    setValidationLoading(true);
+    setError(null);
+    try {
+      const valResult = await runValidation(result.id, { strict_mode: strictMode });
+      setResult((prev) => (prev ? { ...prev, validation: valResult } : prev));
+      setTab('validation');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to run validation.');
+    } finally {
+      setValidationLoading(false);
+    }
+  }
+
   const selectedNode = useMemo(
     () => result?.graph?.nodes.find((n) => n.id === selectedId) ?? null,
     [result, selectedId],
@@ -95,7 +113,7 @@ export default function Home() {
           <p className="text-sm text-zinc-400">AI-powered software migration workspace</p>
         </div>
         <span className="rounded-full border border-violet/50 bg-violet-faint px-3 py-1 font-mono text-[11px] text-violet-soft">
-          Agent 1 (Graph) + Agent 2 (Plan) + Agent 3 (Engineering)
+          Agent 1 (Graph) + Agent 2 (Plan) + Agent 3 (Engineering) + Agent 4 (Validation)
         </span>
       </header>
 
@@ -106,6 +124,8 @@ export default function Home() {
         hasPlan={Boolean(result?.plan)}
         engineeringLoading={engineeringLoading}
         hasEngineering={Boolean(result?.engineering)}
+        validating={validationLoading}
+        hasValidation={Boolean(result?.validation)}
       />
 
       <RepositoryForm
@@ -150,10 +170,19 @@ export default function Home() {
               <button
                 onClick={() => handleRunEngineering(true)}
                 disabled={engineeringLoading}
-                className="inline-flex items-center gap-1.5 rounded-md border border-neon/60 bg-neon-faint px-3 py-1 font-mono text-xs text-neon hover:bg-neon/20 transition disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-md border border-violet/60 bg-violet-faint px-3 py-1 font-mono text-xs text-violet-soft hover:bg-violet/20 transition disabled:opacity-50"
               >
                 <span className={engineeringLoading ? 'animate-spin' : ''}>⚙</span>
                 {engineeringLoading ? 'Engineering…' : 'Agent 3 Engineering'}
+              </button>
+
+              <button
+                onClick={() => handleRunValidation(false)}
+                disabled={validationLoading}
+                className="inline-flex items-center gap-1.5 rounded-md border border-neon/60 bg-neon-faint px-3 py-1 font-mono text-xs text-neon hover:bg-neon/20 transition disabled:opacity-50"
+              >
+                <span className={validationLoading ? 'animate-spin' : ''}>🛡️</span>
+                {validationLoading ? 'Validating…' : 'Agent 4 Validation'}
               </button>
             </div>
           </div>
@@ -172,6 +201,9 @@ export default function Home() {
             </TabButton>
             <TabButton active={tab === 'engineering'} onClick={() => setTab('engineering')}>
               Migration Engineering {result.engineering ? `(${result.engineering.status})` : ''}
+            </TabButton>
+            <TabButton active={tab === 'validation'} onClick={() => setTab('validation')}>
+              Validation {result.validation ? `(${result.validation.status})` : ''}
             </TabButton>
           </div>
 
@@ -217,6 +249,16 @@ export default function Home() {
               result={result.engineering || null}
               loading={engineeringLoading}
               onRunEngineering={handleRunEngineering}
+              onProceedToValidation={() => handleRunValidation(false)}
+            />
+          )}
+
+          {tab === 'validation' && (
+            <ValidationView
+              result={result.validation || null}
+              loading={validationLoading}
+              onRunValidation={handleRunValidation}
+              onOpenFile={openFile}
             />
           )}
         </>

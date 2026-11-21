@@ -16,6 +16,8 @@ from schemas import (
     EngineeringResult,
     Graph,
     MigrationPlan,
+    ValidationRequest,
+    ValidationResult,
 )
 
 app = FastAPI(title="MigrateAI API", version="0.2.0")
@@ -142,6 +144,42 @@ def get_migration_diff(migration_id: str) -> Dict[str, Optional[str]]:
 # ---------------------------------------------------------------------------
 
 
-@app.post("/analysis/{analysis_id}/validate")
-def validate(analysis_id: str) -> None:
-    raise HTTPException(status_code=501, detail="The validation stage is not implemented yet.")
+@app.post("/analysis/{analysis_id}/validate", response_model=ValidationResult)
+def validate(
+    analysis_id: str,
+    request: Optional[ValidationRequest] = None,
+) -> ValidationResult:
+    """Run Agent 4 (Validation Agent) to verify schema, residual code, queries, and syntax."""
+    dry_run = request.dry_run if request else False
+    strict_mode = request.strict_mode if request else False
+    try:
+        return orchestrator.run_validation(
+            analysis_id=analysis_id,
+            dry_run=dry_run,
+            strict_mode=strict_mode,
+        )
+    except orchestrator.OrchestratorError as err:
+        raise _fail(err)
+
+
+@app.get("/analysis/{analysis_id}/validation", response_model=ValidationResult)
+def get_analysis_validation(analysis_id: str) -> ValidationResult:
+    """Retrieve the validation result for an analysis."""
+    found = orchestrator.get_analysis(analysis_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Analysis not found (results are kept in memory only).")
+    if not found.validation:
+        try:
+            found.validation = orchestrator.run_validation(analysis_id=analysis_id)
+        except orchestrator.OrchestratorError as err:
+            raise _fail(err)
+    return found.validation
+
+
+@app.get("/validation/{validation_id}", response_model=ValidationResult)
+def get_validation(validation_id: str) -> ValidationResult:
+    """Retrieve the validation result by validation ID."""
+    result = orchestrator.get_validation(validation_id)
+    if not result:
+        raise HTTPException(status_code=404, detail=f"Validation '{validation_id}' not found.")
+    return result

@@ -4,6 +4,8 @@ import type {
   EngineeringRequest,
   EngineeringResult,
   MigrationPlan,
+  ValidationRequest,
+  ValidationResult,
 } from './types';
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8001';
@@ -77,4 +79,19 @@ export function getMigration(migrationId: string): Promise<EngineeringResult> {
 
 export function getMigrationDiff(migrationId: string): Promise<Record<string, string>> {
   return get<Record<string, string>>(`/migration/${migrationId}/diff`);
+}
+
+export function runValidation(
+  analysisId: string,
+  request?: ValidationRequest
+): Promise<ValidationResult> {
+  return post<ValidationResult>(`/analysis/${analysisId}/validate`, request);
+}
+
+export function getAnalysisValidation(analysisId: string): Promise<ValidationResult> {
+  return get<ValidationResult>(`/analysis/${analysisId}/validation`);
+}
+
+export function getValidation(validationId: string): Promise<ValidationResult> {
+  return get<ValidationResult>(`/validation/${validationId}`);
 }

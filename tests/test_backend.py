@@ -227,11 +227,30 @@ class Api(unittest.TestCase):
         self.assertEqual(diff_res.status_code, 200)
         self.assertIsInstance(diff_res.json(), dict)
 
+    def test_validation_endpoints(self):
+        r = self.client.post('/analyze/sample')
+        analysis_id = r.json()['id']
+        val = self.client.post(f'/analysis/{analysis_id}/validate', json={'dry_run': False})
+        self.assertEqual(val.status_code, 200)
+        data = val.json()
+        self.assertIn('validationId', data)
+        self.assertIn('summary', data)
+        self.assertIn('checks', data)
+        self.assertGreater(data['summary']['totalChecks'], 0)
+        self.assertIn(data['status'], ['passed', 'warnings', 'failed'])
+        val_id = data['validationId']
+        fetched = self.client.get(f'/validation/{val_id}')
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched.json()['validationId'], val_id)
+        from_analysis = self.client.get(f'/analysis/{analysis_id}/validation')
+        self.assertEqual(from_analysis.status_code, 200)
+        self.assertEqual(from_analysis.json()['validationId'], val_id)
+
     def test_validation_and_errors(self):
         self.assertEqual(self.client.post("/analyze", json={"repository_url": "https://evil.com/x/y"}).status_code, 422)
         self.assertEqual(self.client.get("/analysis/missing").status_code, 404)
         self.assertEqual(self.client.post("/analysis/missing/migrate").status_code, 404)
-        self.assertEqual(self.client.post("/analysis/x/validate").status_code, 501)
+        self.assertEqual(self.client.post("/analysis/x/validate").status_code, 404)
 
 
 def _empty_payload():

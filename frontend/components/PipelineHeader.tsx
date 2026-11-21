@@ -13,6 +13,8 @@ interface Props {
   hasPlan?: boolean;
   engineeringLoading?: boolean;
   hasEngineering?: boolean;
+  validating?: boolean;
+  hasValidation?: boolean;
 }
 
 export default function PipelineHeader({
@@ -22,6 +24,8 @@ export default function PipelineHeader({
   hasPlan,
   engineeringLoading,
   hasEngineering,
+  validating,
+  hasValidation,
 }: Props) {
   const stages: Stage[] = [
     { name: 'Repository', caption: 'Connect GitHub', state: hasResult ? 'done' : loading ? 'active' : 'ready' },
@@ -37,7 +41,11 @@ export default function PipelineHeader({
       caption: 'Code engineering',
       state: hasEngineering ? 'done' : engineeringLoading ? 'active' : hasPlan ? 'ready' : 'future',
     },
-    { name: 'Validation', caption: 'Test output', state: 'future' },
+    {
+      name: 'Agent 4',
+      caption: 'Validation',
+      state: hasValidation ? 'done' : validating ? 'active' : hasEngineering ? 'ready' : 'future',
+    },
   ];
 
   return (
