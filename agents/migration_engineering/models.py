@@ -45,6 +45,8 @@ class FileChange(CamelModel):
     review_required: bool = False
     diff: Optional[str] = None
     reason: Optional[str] = None
+    original_code: Optional[str] = None
+    converted_code: Optional[str] = None
 
 
 class EngineeringRequest(BaseModel):
@@ -52,11 +54,12 @@ class EngineeringRequest(BaseModel):
     task_ids: Optional[List[int]] = None
     dry_run: bool = True
     require_approval: bool = True
+    ai_config: Optional[Dict[str, Any]] = None
 
 
 class EngineeringResult(CamelModel):
     migration_id: str
-    status: Literal["completed", "partial", "dry_run"]
+    status: Literal["completed", "partial", "dry_run", "failed"]
     files_modified: int = 0
     files_created: int = 0
     files_skipped: int = 0
@@ -65,3 +68,5 @@ class EngineeringResult(CamelModel):
     diff_available: bool = False
     prisma_schema: Optional[str] = None
     workspace_dir: Optional[str] = None
+    manifest: Optional[Any] = None
+    ai_config: Optional[Any] = None

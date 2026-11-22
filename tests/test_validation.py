@@ -38,7 +38,8 @@ class TestValidationAgent(unittest.TestCase):
             shutil.rmtree(self.temp_ws, ignore_errors=True)
 
     def test_validation_on_sample_app_migration(self):
-        # Run validation through orchestrator
+        # Run engineering first to create the workspace
+        orchestrator.run_migration_engineering(self.analysis.id, dry_run=False)
         val_result = orchestrator.run_validation(self.analysis.id)
 
         self.assertIsNotNone(val_result)

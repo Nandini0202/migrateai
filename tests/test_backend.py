@@ -230,6 +230,14 @@ class Api(unittest.TestCase):
     def test_validation_endpoints(self):
         r = self.client.post('/analyze/sample')
         analysis_id = r.json()['id']
+        # Pipeline dependency enforcement: validation before engineering must return 400
+        err_val = self.client.post(f'/analysis/{analysis_id}/validate', json={'dry_run': False})
+        self.assertEqual(err_val.status_code, 400)
+
+        # Run engineering to create the workspace
+        eng = self.client.post(f'/analysis/{analysis_id}/engineer', json={'dry_run': False})
+        self.assertEqual(eng.status_code, 200)
+
         val = self.client.post(f'/analysis/{analysis_id}/validate', json={'dry_run': False})
         self.assertEqual(val.status_code, 200)
         data = val.json()
@@ -251,6 +259,92 @@ class Api(unittest.TestCase):
         self.assertEqual(self.client.get("/analysis/missing").status_code, 404)
         self.assertEqual(self.client.post("/analysis/missing/migrate").status_code, 404)
         self.assertEqual(self.client.post("/analysis/x/validate").status_code, 404)
+
+    def test_ai_config_and_test_endpoints(self):
+        # 1. GET /ai/config
+        cfg = self.client.get("/ai/config")
+        self.assertEqual(cfg.status_code, 200)
+        self.assertIn("provider", cfg.json())
+
+        # 2. POST /ai/config
+        update_res = self.client.post("/ai/config", json={
+            "provider": "ollama",
+            "model": "qwen2.5-coder:7b",
+            "temperature": 0.2,
+        })
+        self.assertEqual(update_res.status_code, 200)
+        self.assertEqual(update_res.json()["model"], "qwen2.5-coder:7b")
+
+        # 3. GET /ai/models
+        models_res = self.client.get("/ai/models?provider=ollama")
+        self.assertEqual(models_res.status_code, 200)
+        self.assertIn("models", models_res.json())
+
+        # 4. POST /ai/test with unreachable port
+        test_res = self.client.post("/ai/test", json={
+            "config": {
+                "provider": "ollama",
+                "model": "qwen2.5-coder:7b",
+                "base_url": "http://127.0.0.1:59999",
+                "timeout_seconds": 1.0,
+            }
+        })
+        self.assertEqual(test_res.status_code, 200)
+        data = test_res.json()
+        self.assertFalse(data["success"])
+
+    def test_export_and_file_manifest_endpoints(self):
+        r = self.client.post("/analyze/sample")
+        analysis_id = r.json()["id"]
+
+        eng = self.client.post(f"/analysis/{analysis_id}/engineer", json={"dry_run": False})
+        self.assertEqual(eng.status_code, 200)
+        eng_data = eng.json()
+        mig_id = eng_data["migrationId"]
+
+        # 1. GET /migration/{mig_id}/files
+        files_res = self.client.get(f"/migration/{mig_id}/files")
+        self.assertEqual(files_res.status_code, 200)
+        manifest = files_res.json()
+        self.assertIn("totalFiles", manifest)
+        self.assertIn("files", manifest)
+        self.assertGreater(manifest["totalFiles"], 0)
+        # Verify reconciliation formula: Total == Converted + Warnings + Unchanged + Skipped + Failed
+        calc_total = (
+            manifest["convertedCount"]
+            + manifest["warningCount"]
+            + manifest["unchangedCount"]
+            + manifest["skippedCount"]
+            + manifest["failedCount"]
+        )
+        self.assertEqual(manifest["totalFiles"], calc_total)
+
+        # 2. GET /migration/{mig_id}/export/zip
+        zip_res = self.client.get(f"/migration/{mig_id}/export/zip?export_type=full")
+        self.assertEqual(zip_res.status_code, 200)
+        self.assertEqual(zip_res.headers["content-type"], "application/zip")
+        self.assertGreater(len(zip_res.content), 100)
+
+        # 3. GET /migration/{mig_id}/export/report/markdown
+        md_res = self.client.get(f"/migration/{mig_id}/export/report/markdown")
+        self.assertEqual(md_res.status_code, 200)
+        self.assertIn("MigrateAI — Code Migration Report", md_res.text)
+
+        # 4. GET /migration/{mig_id}/export/report/csv
+        csv_res = self.client.get(f"/migration/{mig_id}/export/report/csv")
+        self.assertEqual(csv_res.status_code, 200)
+        self.assertIn("path,status,conversion_method", csv_res.text)
+
+    def test_retry_endpoint(self):
+        r = self.client.post("/analyze/sample")
+        analysis_id = r.json()["id"]
+        eng = self.client.post(f"/analysis/{analysis_id}/engineer", json={"dry_run": False})
+        mig_id = eng.json()["migrationId"]
+
+        # Retry endpoint
+        retry_res = self.client.post(f"/migration/{mig_id}/retry", json={})
+        self.assertEqual(retry_res.status_code, 200)
+        self.assertIn("migrationId", retry_res.json())
 
 
 def _empty_payload():

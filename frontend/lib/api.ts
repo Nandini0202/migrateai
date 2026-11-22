@@ -92,6 +92,26 @@ export function getAnalysisValidation(analysisId: string): Promise<ValidationRes
   return get<ValidationResult>(`/analysis/${analysisId}/validation`);
 }
 
-export function getValidation(validationId: string): Promise<ValidationResult> {
-  return get<ValidationResult>(`/validation/${validationId}`);
+export function getValidation(validationId: string): Promise<ValidationResult> { return get<ValidationResult>(`/validation/${validationId}`); }
+
+export function downloadExport(analysisId:string, exportType:string='full'):Promise<Blob>{
+  const url = `${API_URL}/analysis/${analysisId}/export?type=${exportType}`;
+  return fetch(url).then(res=>{
+    if(!res.ok) throw new Error(`Export failed (${res.status})`);
+    return res.blob();
+  });
+}
+
+export function getMigrationFiles(migrationId: string): Promise<any> {
+  return get<any>(`/migration/${migrationId}/files`);
+}
+
+// ----- AI configuration endpoints -----
+export function getAIConfig(): Promise<any> { return get<any>('/ai/config'); }
+export function setAIConfig(config:any): Promise<any> { return post<any>('/ai/config', config); }
+export function getAIModels(provider: string = 'ollama'): Promise<any> {
+  return get<any>(`/ai/models?provider=${encodeURIComponent(provider)}`);
+}
+export function testAIConnection(config: any): Promise<any> {
+  return post<any>('/ai/test', { config });
 }

@@ -9,7 +9,11 @@ import NodeDetails from '@/components/NodeDetails';
 import PipelineHeader from '@/components/PipelineHeader';
 import RepositoryForm from '@/components/RepositoryForm';
 import SummaryCards from '@/components/SummaryCards';
+import AISettingsModal from '@/components/AISettingsModal';
+import FileExplorer from '@/components/FileExplorer';
 import ValidationView from '@/components/ValidationView';
+import { saveAs } from 'file-saver';
+import { downloadExport } from '@/lib/api';
 import {
   analyzeRepository,
   analyzeSample,
@@ -30,6 +34,20 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('graph');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [exportLoading, setExportLoading] = useState(false);
+  const handleExport = async (type = 'full') => {
+    if (!result) return;
+    setExportLoading(true);
+    try {
+      const blob = await downloadExport(result.id, type);
+      saveAs(blob, `migration_${type}.zip`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Export failed');
+    } finally {
+      setExportLoading(false);
+    }
+  };
+  const [showAISettings, setShowAISettings] = useState(false);
 
   async function run(task: () => Promise<AnalysisResponse>) {
     setLoading(true);
@@ -61,7 +79,7 @@ export default function Home() {
     }
   }
 
-  async function handleRunEngineering(dryRun: boolean = true) {
+  async function handleRunEngineering(dryRun: boolean = false) {
     if (!result) return;
     setEngineeringLoading(true);
     setError(null);
@@ -73,6 +91,36 @@ export default function Home() {
       setError(err instanceof Error ? err.message : 'Failed to run migration engineering.');
     } finally {
       setEngineeringLoading(false);
+    }
+  }
+
+  async function handleRunFullPipeline() {
+    if (!result) return;
+    setError(null);
+    try {
+      setMigrating(true);
+      const plan = await runMigrationPlan(result.id);
+      setResult((prev) => (prev ? { ...prev, plan } : prev));
+      setMigrating(false);
+
+      setEngineeringLoading(true);
+      const engResult = await runEngineering(result.id, { dry_run: false });
+      setResult((prev) => (prev ? { ...prev, engineering: engResult } : prev));
+      setEngineeringLoading(false);
+
+      setValidationLoading(true);
+      const valResult = await runValidation(result.id, { strict_mode: false });
+      setResult((prev) => (prev ? { ...prev, validation: valResult } : prev));
+      setValidationLoading(false);
+
+      setTab('engineering');
+      await handleExport('full');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Full pipeline execution failed.');
+    } finally {
+      setMigrating(false);
+      setEngineeringLoading(false);
+      setValidationLoading(false);
     }
   }
 
@@ -115,6 +163,12 @@ export default function Home() {
         <span className="rounded-full border border-violet/50 bg-violet-faint px-3 py-1 font-mono text-[11px] text-violet-soft">
           Agent 1 (Graph) + Agent 2 (Plan) + Agent 3 (Engineering) + Agent 4 (Validation)
         </span>
+        <button
+          onClick={() => setShowAISettings(true)}
+          className="ml-4 rounded bg-amber-600 px-3 py-1 text-sm font-medium text-white hover:bg-amber-500"
+        >
+          AI Settings
+        </button>
       </header>
 
       <PipelineHeader
@@ -157,7 +211,18 @@ export default function Home() {
               </span>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleRunFullPipeline}
+                disabled={migrating || engineeringLoading || validationLoading || exportLoading}
+                className="inline-flex items-center gap-1.5 rounded-md bg-neon px-3 py-1 font-mono text-xs font-semibold text-ink-950 hover:brightness-110 transition disabled:opacity-50 shadow-neon"
+              >
+                <span>⚡</span>
+                {migrating || engineeringLoading || validationLoading
+                  ? 'Migrating Pipeline…'
+                  : 'Auto-Migrate & Download ZIP'}
+              </button>
+
               <button
                 onClick={handleGeneratePlan}
                 disabled={migrating}
@@ -168,7 +233,7 @@ export default function Home() {
               </button>
 
               <button
-                onClick={() => handleRunEngineering(true)}
+                onClick={() => handleRunEngineering(false)}
                 disabled={engineeringLoading}
                 className="inline-flex items-center gap-1.5 rounded-md border border-violet/60 bg-violet-faint px-3 py-1 font-mono text-xs text-violet-soft hover:bg-violet/20 transition disabled:opacity-50"
               >
@@ -183,6 +248,15 @@ export default function Home() {
               >
                 <span className={validationLoading ? 'animate-spin' : ''}>🛡️</span>
                 {validationLoading ? 'Validating…' : 'Agent 4 Validation'}
+              </button>
+
+              <button
+                onClick={() => handleExport('full')}
+                disabled={exportLoading}
+                className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/60 bg-emerald-500/10 px-3 py-1 font-mono text-xs text-emerald-400 hover:bg-emerald-500/20 transition disabled:opacity-50"
+              >
+                <span>📦</span>
+                {exportLoading ? 'Exporting…' : 'Export ZIP'}
               </button>
             </div>
           </div>
@@ -221,7 +295,7 @@ export default function Home() {
               <div className="space-y-4">
                 <div className="flex justify-end">
                   <button
-                    onClick={() => handleRunEngineering(true)}
+                    onClick={() => handleRunEngineering(false)}
                     disabled={engineeringLoading}
                     className="rounded-lg bg-neon px-4 py-2 text-xs font-semibold text-ink-950 hover:brightness-110 shadow-neon"
                   >
@@ -244,13 +318,28 @@ export default function Home() {
             )
           )}
 
-          {tab === 'engineering' && (
-            <EngineeringView
-              result={result.engineering || null}
-              loading={engineeringLoading}
-              onRunEngineering={handleRunEngineering}
-              onProceedToValidation={() => handleRunValidation(false)}
-            />
+          {tab === 'engineering' && result?.engineering && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
+                <span className="text-xs text-emerald-300">
+                  Migration engineering completed (Status: <strong>{result.engineering.status}</strong>)
+                </span>
+                <button
+                  onClick={() => handleExport('full')}
+                  disabled={exportLoading}
+                  className="rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-black hover:bg-emerald-400 transition"
+                >
+                  {exportLoading ? 'Packaging ZIP…' : '⬇ Download Migrated ZIP'}
+                </button>
+              </div>
+              <EngineeringView
+                result={result.engineering || null}
+                loading={engineeringLoading}
+                onRunEngineering={handleRunEngineering}
+                onProceedToValidation={() => handleRunValidation(false)}
+              />
+              <FileExplorer migrationId={result.engineering.migrationId} />
+            </div>
           )}
 
           {tab === 'validation' && (

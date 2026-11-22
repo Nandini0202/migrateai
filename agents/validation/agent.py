@@ -19,7 +19,10 @@ from .models import (
 )
 from .reporter import ValidationReporter
 from .validators import (
+    BuildValidator,
     DependencyValidator,
+    IntegrityValidator,
+    PrismaCliValidator,
     QueryValidator,
     ResidualValidator,
     SchemaValidator,
@@ -65,6 +68,18 @@ class ValidationAgent:
         # 5. Syntax & Compilation Validation
         syntax_validator = SyntaxValidator(workspace_dir, analysis_data)
         checks.extend(syntax_validator.validate())
+
+        # 6. File Integrity & Zero-Byte Checks
+        integrity_validator = IntegrityValidator(workspace_dir, analysis_data)
+        checks.extend(integrity_validator.validate())
+
+        # 7. Prisma Schema & Key Definition
+        prisma_validator = PrismaCliValidator(workspace_dir, analysis_data)
+        checks.extend(prisma_validator.validate())
+
+        # 8. Build & Test Suite Declaration
+        build_validator = BuildValidator(workspace_dir, analysis_data)
+        checks.extend(build_validator.validate())
 
         # Calculate metrics
         total = len(checks)

@@ -1,15 +1,31 @@
 """Agent 3 — Migration Engineering Agent.
 
 Context-aware code transformation engine for MongoDB/Mongoose to PostgreSQL/Prisma.
-Translates schemas, replaces database queries, handles relations, and writes
-diffs to an isolated workspace.
+Translates schemas, replaces database queries, handles relations, writes
+diffs to an isolated workspace, and records file manifests.
 """
 
 from __future__ import annotations
 
+import sys
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_DIR = REPO_ROOT / "backend"
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+try:
+    from services.file_tracker import FileTrackerService
+except ImportError:
+    try:
+        from backend.services.file_tracker import FileTrackerService
+    except ImportError:
+        FileTrackerService = None
 
 from .code_generator import CodeGenerator
 from .context_builder import ContextBuilder
@@ -18,6 +34,48 @@ from .models import EngineeringResult, FileChange, FunctionContext, ModelSchema
 from .patch_applier import PatchApplier
 from .schema_generator import SchemaGenerator
 from .transformation_engine import TransformationEngine
+
+
+def resolve_model_for_file(
+    rel_file: str,
+    file_code: str,
+    model_schemas: List[ModelSchema],
+    analysis_data: Dict[str, Any],
+) -> Optional[str]:
+    """Resolve the associated Mongoose model for a file without arbitrary fallbacks."""
+    # 1. Check graph nodes
+    graph = analysis_data.get("graph") or {}
+    for node in graph.get("nodes", []):
+        if node.get("id") == rel_file and node.get("models"):
+            return node["models"][0]
+
+    # 2. Check if file stem matches a known model schema
+    schemas_list: List[Any] = (
+        list(model_schemas.values()) if isinstance(model_schemas, dict) else (model_schemas or [])
+    )
+    file_stem = Path(rel_file).stem.lower()
+    for clean_suffix in ["service", "controller", "routes", "route", "model"]:
+        if file_stem.endswith(clean_suffix) and len(file_stem) > len(clean_suffix):
+            file_stem = file_stem[: -len(clean_suffix)]
+            break
+
+    for ms in schemas_list:
+        ms_name = ms.name if hasattr(ms, "name") else str(ms)
+        if ms_name.lower() == file_stem or ms_name.lower() in rel_file.lower():
+            return ms_name
+
+    # 3. Check code imports or requires
+    for ms in schemas_list:
+        ms_name = ms.name if hasattr(ms, "name") else str(ms)
+        if (
+            f"models/{ms_name}" in file_code
+            or f"models/{ms_name.lower()}" in file_code
+            or f"'{ms_name}'" in file_code
+            or f'"{ms_name}"' in file_code
+        ):
+            return ms_name
+
+    return None
 
 
 class MigrationEngineeringAgent:
@@ -36,6 +94,7 @@ class MigrationEngineeringAgent:
         analysis_data: Dict[str, Any],
         task_ids: Optional[List[int]] = None,
         dry_run: bool = True,
+        ai_config: Optional[Any] = None,
     ) -> EngineeringResult:
         migration_id = uuid.uuid4().hex[:12]
         workspace = self.patch_applier.prepare_workspace(repo_dir, migration_id)
@@ -46,8 +105,11 @@ class MigrationEngineeringAgent:
         schema_gen = SchemaGenerator(model_schemas)
         prisma_schema_content = schema_gen.generate()
 
+        use_llm = ai_config is not None
         transform_engine = TransformationEngine(
-            llm_client=self.llm_client, prisma_schema=prisma_schema_content
+            llm_client=self.llm_client,
+            prisma_schema=prisma_schema_content,
+            ai_config=ai_config,
         )
 
         # 2. Filter migration tasks
@@ -101,17 +163,33 @@ class MigrationEngineeringAgent:
             function_replacements: Dict[str, str] = {}
             file_change_notes: List[str] = []
             file_review_required = False
-            associated_model = "User"
+
+            # Resolve associated model without fallback
+            associated_model: Optional[str] = resolve_model_for_file(
+                rel_file, orig_file_code, model_schemas, analysis_data
+            )
 
             # 5a. Process planned tasks
             for task in file_tasks:
                 t_id = task.get("id")
                 t_line = task.get("line")
-                model_name = task.get("model") or "User"
-                associated_model = model_name
+                task_model = task.get("model") or associated_model
+                if task_model:
+                    associated_model = task_model
+
                 source_op = task.get("source_operation") or ""
                 target_op = task.get("target_operation") or ""
                 action = task.get("action", "")
+
+                # If model is completely unresolved, flag as manual review needed
+                if not task_model:
+                    file_review_required = True
+                    file_change_notes.append(
+                        f"Unresolved model for task #{t_id} ({source_op or action}). Manual review required."
+                    )
+                    if t_id and t_id not in unresolved_tasks:
+                        unresolved_tasks.append(t_id)
+                    continue
 
                 # Find matching function by line first, then by operation/keyword
                 matching_fn: Optional[FunctionContext] = None
@@ -145,16 +223,16 @@ class MigrationEngineeringAgent:
                         file_path=matching_fn.file_path,
                         function_name=matching_fn.function_name,
                         source_code=current_code,
-                        model_name=model_name,
+                        model_name=task_model,
                         operation=source_op,
                     )
-                    transformed_code, changes, review_needed = (
-                        transform_engine.transform_function(
-                            func=temp_fn,
-                            model_name=model_name,
-                            source_op=source_op or action,
-                            target_op=target_op,
-                        )
+                    transformed_code, changes, review_needed = transform_engine.transform_function(
+                        func=temp_fn,
+                        model_name=task_model,
+                        source_op=source_op or action,
+                        target_op=target_op,
+                        use_llm=use_llm,
+                        ai_config=ai_config,
                     )
                     if transformed_code != matching_fn.source_code:
                         function_replacements[matching_fn.source_code] = transformed_code
@@ -168,16 +246,16 @@ class MigrationEngineeringAgent:
                         unresolved_tasks.append(t_id)
 
             # 5b. Pass remaining functions in the file through the engine if full migration (task_ids is None)
-            if task_ids is None:
+            if task_ids is None and associated_model:
                 for fn in functions:
                     if fn.source_code not in function_replacements:
-                        transformed_code, changes, review_needed = (
-                            transform_engine.transform_function(
-                                func=fn,
-                                model_name=associated_model,
-                                source_op="",
-                                target_op="",
-                            )
+                        transformed_code, changes, review_needed = transform_engine.transform_function(
+                            func=fn,
+                            model_name=associated_model,
+                            source_op="",
+                            target_op="",
+                            use_llm=use_llm,
+                            ai_config=ai_config,
                         )
                         if transformed_code != fn.source_code:
                             function_replacements[fn.source_code] = transformed_code
@@ -189,7 +267,7 @@ class MigrationEngineeringAgent:
                 updated_code, import_changes = self.code_generator.update_service_file(
                     code=orig_file_code,
                     function_replacements=function_replacements,
-                    model_name=associated_model,
+                    model_name=associated_model or "Model",
                 )
                 file_change_notes.extend(import_changes)
 
@@ -224,6 +302,19 @@ class MigrationEngineeringAgent:
 
         status_str = "dry_run" if dry_run else ("completed" if not unresolved_tasks else "partial")
 
+        # 7. Generate File Manifest
+        manifest = None
+        findings_files = {f.get("file") for f in analysis_data.get("findings", []) if f.get("file")}
+        if FileTrackerService is not None:
+            manifest = FileTrackerService.generate_manifest(
+                source_dir=repo_dir,
+                workspace_dir=workspace if not dry_run else None,
+                findings_files=findings_files,
+                file_changes=file_changes,
+                unresolved_tasks=unresolved_tasks,
+                ai_model_name=ai_config.model if hasattr(ai_config, "model") else (ai_config.get("model") if isinstance(ai_config, dict) else None),
+            )
+
         return EngineeringResult(
             migration_id=migration_id,
             status=status_str,
@@ -235,4 +326,6 @@ class MigrationEngineeringAgent:
             diff_available=any(f.diff is not None for f in file_changes),
             prisma_schema=prisma_schema_content,
             workspace_dir=str(workspace) if not dry_run else None,
+            manifest=manifest.model_dump(by_alias=True) if manifest else None,
+            ai_config=ai_config.model_dump() if hasattr(ai_config, "model_dump") else ai_config,
         )

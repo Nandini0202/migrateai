@@ -7,24 +7,60 @@ and uses LLM or manual review flags for complex/blocker patterns.
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional, Tuple
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_DIR = REPO_ROOT / "backend"
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+try:
+    from services.llm_provider import LLMTransformationService
+except ImportError:
+    try:
+        from backend.services.llm_provider import LLMTransformationService
+    except ImportError:
+        LLMTransformationService = None
 
 from .llm_client import LLMClient
 from .models import FunctionContext
 
+BLOCKER_KEYWORDS = [
+    "aggregate(",
+    "$lookup",
+    "$unwind",
+    "$facet",
+    "$bucket",
+    "$geoNear",
+    "$graphLookup",
+    "watch(",
+    "createCollection(",
+]
+
 
 class TransformationEngine:
-    def __init__(self, llm_client: Optional[LLMClient] = None, prisma_schema: str = ""):
+    def __init__(
+        self,
+        llm_client: Optional[LLMClient] = None,
+        prisma_schema: str = "",
+        ai_config: Optional[Any] = None,
+    ):
         self.llm = llm_client or LLMClient()
         self.prisma_schema = prisma_schema
+        self.ai_config = ai_config
 
     def transform_function(
         self,
         func: FunctionContext,
-        model_name: str,
+        model_name: Optional[str],
         source_op: str,
         target_op: str,
         use_llm: bool = False,
+        ai_config: Optional[Any] = None,
     ) -> Tuple[str, List[str], bool]:
         """
         Transform a function body from Mongoose to Prisma.
@@ -33,22 +69,38 @@ class TransformationEngine:
         code = func.source_code
         changes: List[str] = []
         review_required = False
+        effective_ai_config = ai_config or self.ai_config
 
-        # Blocker check (e.g. aggregate)
-        if "aggregate(" in code or "aggregate" in source_op.lower():
-            return (
-                code,
-                [f"Review required: Complex aggregation in {func.function_name} cannot be automatically migrated."],
-                True,
+        # 1. Blocker / Unsupported Pattern Check
+        for blocker in BLOCKER_KEYWORDS:
+            if blocker in code or blocker in source_op.lower():
+                return (
+                    code,
+                    [f"Review required: Complex/unsupported pattern '{blocker}' in {func.function_name} cannot be automatically migrated."],
+                    True,
+                )
+
+        # 2. Try Multi-Provider LLM if configured or requested
+        if (use_llm or effective_ai_config is not None) and LLMTransformationService is not None and effective_ai_config:
+            transformed_code, ai_notes, review_needed = LLMTransformationService.transform_function_with_retry(
+                config=effective_ai_config,
+                source_code=code,
+                source_operation=source_op,
+                target_operation=target_op,
+                model_name=model_name or "UnknownModel",
+                file_path=func.file_path,
+                prisma_schema=self.prisma_schema,
             )
+            if transformed_code and transformed_code != code:
+                return transformed_code, ai_notes, review_needed
 
-        # Try LLM first if requested and available
+        # 3. Fallback to LLMClient (Ollama legacy) if requested and available
         if use_llm and self.llm.is_available():
             llm_res = self.llm.transform_code(
                 source_code=code,
                 source_operation=source_op,
                 target_operation=target_op,
-                model_name=model_name,
+                model_name=model_name or "UnknownModel",
                 file_path=func.file_path,
                 prisma_schema=self.prisma_schema,
             )
@@ -59,7 +111,14 @@ class TransformationEngine:
                     bool(llm_res.get("review_required", False)),
                 )
 
-        # Deterministic transformations
+        # 4. Deterministic Transformations
+        if not model_name:
+            return (
+                code,
+                [f"Review required: Unresolved model in {func.function_name}. Manual conversion required."],
+                True,
+            )
+
         transformed, op_changes, needs_review = self._apply_deterministic_rules(
             code, model_name, source_op, target_op
         )
@@ -73,6 +132,8 @@ class TransformationEngine:
         self, code: str, model_name: str, source_op: str, target_op: str
     ) -> Tuple[str, List[str], bool]:
         changes = []
+        if not model_name or not model_name.strip():
+            return code, ["Model unresolved for this function. Review required."], True
         model_prop = model_name.lower()
         new_code = code
         escaped_name = re.escape(model_name)

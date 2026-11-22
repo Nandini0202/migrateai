@@ -84,4 +84,6 @@ class PatchApplier:
             review_required=review_required,
             diff=diff,
             reason="Prisma migration transformation" if status == "modified" else "Generated target file",
+            original_code=orig_text,
+            converted_code=new_content,
         )

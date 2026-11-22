@@ -22,17 +22,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from schemas import (
-    AnalysisResponse,
-    AnalyzeRequest,
-    EngineeringResult,
-    MigrationPlan,
-    ValidationRequest,
-    ValidationResult,
-    parse_github_url,
-)
+try:
+    from . import schemas as _schemas
+except ImportError:
+    import schemas as _schemas
+
+# Export needed names directly for ease of use
+AnalysisResponse = _schemas.AnalysisResponse
+AnalyzeRequest = _schemas.AnalyzeRequest
+EngineeringResult = _schemas.EngineeringResult
+MigrationPlan = _schemas.MigrationPlan
+ValidationRequest = _schemas.ValidationRequest
+ValidationResult = _schemas.ValidationResult
+parse_github_url = _schemas.parse_github_url
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_DIR = Path(__file__).resolve().parent
 ANALYZER_DIR = Path(os.environ.get("MIGRATEAI_ANALYZER_DIR", REPO_ROOT / "analyzer"))
 SAMPLE_DIR = REPO_ROOT / "tests" / "fixtures" / "sample-app"
 MIGRATION_PLANNER_DIR = REPO_ROOT / "migration_planner"
@@ -40,6 +46,8 @@ AGENTS_DIR = REPO_ROOT / "agents"
 SNAPSHOTS_DIR = REPO_ROOT / "migration_workspaces" / "snapshots"
 SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
 
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
 if str(MIGRATION_PLANNER_DIR) not in sys.path:
     sys.path.insert(0, str(MIGRATION_PLANNER_DIR))
 if str(REPO_ROOT) not in sys.path:
@@ -218,6 +226,7 @@ def run_migration_engineering(
     analysis_id: str,
     task_ids: Optional[List[int]] = None,
     dry_run: bool = True,
+    ai_config: Optional[Any] = None,
 ) -> EngineeringResult:
     """Agent 3: Run migration engineering on the analyzed repository."""
     analysis = get_analysis(analysis_id)
@@ -244,6 +253,7 @@ def run_migration_engineering(
         analysis_data=analysis.model_dump(by_alias=True),
         task_ids=task_ids,
         dry_run=dry_run,
+        ai_config=ai_config,
     )
 
     with _store_lock:
@@ -257,6 +267,21 @@ def get_migration(migration_id: str) -> Optional[EngineeringResult]:
     with _store_lock:
         return _engineering_store.get(migration_id)
 
+
+def retry_migration(
+    analysis_id: str,
+    task_ids: Optional[List[int]] = None,
+    ai_config: Optional[Any] = None,
+) -> EngineeringResult:
+    """Retry specific tasks or all remaining unresolved tasks."""
+    return run_migration_engineering(
+        analysis_id=analysis_id,
+        task_ids=task_ids,
+        dry_run=False,
+        ai_config=ai_config,
+    )
+
+
 def run_validation(
     analysis_id: str,
     dry_run: bool = False,
@@ -267,10 +292,11 @@ def run_validation(
     if not analysis:
         raise OrchestratorError(f"Analysis '{analysis_id}' not found.", 404)
 
-    # Ensure Agent 3 (Migration Engineering) has run so there are migrated files to validate
+    # Validation must never silently perform engineering or modify files
     if not analysis.engineering or not analysis.engineering.workspace_dir or not Path(analysis.engineering.workspace_dir).is_dir():
-        # Run engineering to create the workspace on disk
-        analysis.engineering = run_migration_engineering(analysis_id, dry_run=False)
+        raise OrchestratorError(
+            "Migration engineering has not been executed yet. Run Agent 3 before validating.", 400
+        )
 
     ws_dir_str = analysis.engineering.workspace_dir
     if not ws_dir_str or not Path(ws_dir_str).is_dir():

@@ -15,20 +15,26 @@ from typing import Any, Dict, Optional
 
 class LLMClient:
     def __init__(self, host: Optional[str] = None, model: Optional[str] = None):
-        self.host = host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        raw_host = host or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+        self.host = raw_host.replace("localhost", "127.0.0.1")
         self.model = model or os.environ.get("MIGRATEAI_LLM_MODEL", "qwen2.5-coder:7b")
         prompt_path = Path(__file__).parent / "prompts" / "migration_prompt.txt"
         self.prompt_template = (
             prompt_path.read_text(encoding="utf-8") if prompt_path.is_file() else ""
         )
+        self._cached_available: Optional[bool] = None
 
-    def is_available(self, timeout_s: float = 1.0) -> bool:
+    def is_available(self, timeout_s: float = 0.2) -> bool:
         """Check if the Ollama endpoint is reachable."""
+        if self._cached_available is not None:
+            return self._cached_available
         try:
             req = urllib.request.Request(f"{self.host}/api/tags", method="GET")
             with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-                return resp.status == 200
+                self._cached_available = (resp.status == 200)
+                return self._cached_available
         except Exception:
+            self._cached_available = False
             return False
 
     def transform_code(

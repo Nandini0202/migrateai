@@ -200,6 +200,89 @@ class MigrationPlan(CamelModel):
 
 
 # ---------------------------------------------------------------------------
+# AI Engine models
+# ---------------------------------------------------------------------------
+
+AIProvider = Literal["ollama", "gemini", "openai", "claude"]
+
+
+class AIConfig(BaseModel):
+    provider: AIProvider = "ollama"
+    model: str = "qwen2.5-coder:7b"
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    temperature: float = 0.1
+    timeout_seconds: float = 30.0
+    max_retries: int = 2
+
+
+class AITestRequest(BaseModel):
+    config: AIConfig
+
+
+class AITestResponse(CamelModel):
+    success: bool
+    provider: str
+    model: str
+    message: str
+    available_models: List[str] = []
+
+
+class AIModelsResponse(CamelModel):
+    provider: str
+    models: List[str]
+
+
+# ---------------------------------------------------------------------------
+# File Tracking & Manifest models
+# ---------------------------------------------------------------------------
+
+FileStatus = Literal[
+    "converted",
+    "warnings",
+    "failed",
+    "pending",
+    "skipped",
+    "unchanged",
+    "manual_review",
+    "verified",
+]
+
+
+class FileRecord(CamelModel):
+    path: str
+    original_hash: Optional[str] = None
+    converted_hash: Optional[str] = None
+    original_lines: int = 0
+    converted_lines: int = 0
+    original_size: int = 0
+    converted_size: int = 0
+    status: FileStatus = "pending"
+    conversion_method: Literal["rule_based", "llm", "hybrid", "none"] = "none"
+    model_used: Optional[str] = None
+    errors: List[str] = []
+    warnings: List[str] = []
+    retry_count: int = 0
+    has_diff: bool = False
+    requires_conversion: bool = False
+
+
+class RepositoryManifest(CamelModel):
+    total_files: int = 0
+    scanned_files: int = 0
+    files_requiring_conversion: int = 0
+    converted_count: int = 0
+    warning_count: int = 0
+    failed_count: int = 0
+    unchanged_count: int = 0
+    skipped_count: int = 0
+    manual_count: int = 0
+    verified_count: int = 0
+    verified_progress: float = 0.0
+    files: List[FileRecord] = []
+
+
+# ---------------------------------------------------------------------------
 # Agent 3 — Migration Engineering models
 # ---------------------------------------------------------------------------
 
@@ -217,11 +300,12 @@ class EngineeringRequest(BaseModel):
     task_ids: Optional[List[int]] = None
     dry_run: bool = True
     require_approval: bool = True
+    ai_config: Optional[AIConfig] = None
 
 
 class EngineeringResult(CamelModel):
     migration_id: str
-    status: Literal["completed", "partial", "dry_run"]
+    status: Literal["completed", "partial", "dry_run", "failed"]
     files_modified: int = 0
     files_created: int = 0
     files_skipped: int = 0
@@ -230,6 +314,24 @@ class EngineeringResult(CamelModel):
     diff_available: bool = False
     prisma_schema: Optional[str] = None
     workspace_dir: Optional[str] = None
+    manifest: Optional[RepositoryManifest] = None
+    ai_config: Optional[AIConfig] = None
+
+
+class RetryRequest(BaseModel):
+    file_paths: Optional[List[str]] = None
+    task_ids: Optional[List[int]] = None
+    ai_config: Optional[AIConfig] = None
+
+
+class BranchesRequest(BaseModel):
+    repository_url: str
+
+
+class BranchesResponse(CamelModel):
+    repository_url: str
+    branches: List[str]
+    default_branch: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

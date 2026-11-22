@@ -74,12 +74,12 @@ export default function RepositoryForm({ loading, onAnalyze, onSample }: Props) 
       </div>
 
       <fieldset className="mt-4">
-        <legend className="mb-2 text-xs text-zinc-400">Choose analysis steps</legend>
+        <legend className="mb-2 text-xs text-zinc-400">Autonomous 4-Agent Pipeline</legend>
         <div className="grid gap-2 sm:grid-cols-2">
-          <Step checked disabled label="Scan for MongoDB/Mongoose files" />
-          <Step checked={generateGraph} onChange={setGenerateGraph} label="Generate dependency graph (Agent 1)" />
-          <Step disabled label="Run migration agent" future />
-          <Step disabled label="Validate migrated application" future />
+          <Step checked disabled label="1. Scan & Dependency Graph (Agent 1)" />
+          <Step checked disabled label="2. Migration Planner (Agent 2)" />
+          <Step checked disabled label="3. Migration Engineering & Schema (Agent 3)" />
+          <Step checked disabled label="4. Validation & Quality Suite (Agent 4)" />
         </div>
       </fieldset>
 
